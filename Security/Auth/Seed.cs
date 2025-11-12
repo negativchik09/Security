@@ -4,6 +4,7 @@ namespace Security.Auth;
 
 public static class Seed
 {
+    public const string AdminRole = "Admin";
     public static async void Initialize(IServiceProvider serviceProvider)
     {
         using var scope = serviceProvider.CreateScope();
@@ -16,7 +17,7 @@ public static class Seed
             return;
         }
 
-        string[] roles = { UserRoles.Manager, UserRoles.Worker, UserRoles.Admin };
+        string[] roles = ["Admin"];
         
         foreach (string role in roles)
         {
@@ -33,27 +34,7 @@ public static class Seed
                 UserName = "admin"
             };
             await userManager.CreateAsync(admin, "Admin_password1");
-            await userManager.AddToRoleAsync(admin, UserRoles.Admin);
-        }
-        
-        if (await userManager.FindByNameAsync("manager") == null)
-        {
-            var manager = new IdentityUser()
-            {
-                UserName = "manager"
-            };
-            await userManager.CreateAsync(manager, "Manager_password1");
-            await userManager.AddToRoleAsync(manager, UserRoles.Manager);
-        }
-        
-        if (await userManager.FindByNameAsync("worker") == null)
-        {
-            var worker = new IdentityUser()
-            {
-                UserName = "worker"
-            };
-            await userManager.CreateAsync(worker, "Worker_password1");
-            await userManager.AddToRoleAsync(worker, UserRoles.Worker);
+            await userManager.AddToRoleAsync(admin, AdminRole);
         }
     }
 }

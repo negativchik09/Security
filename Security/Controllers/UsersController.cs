@@ -33,54 +33,67 @@ public class UsersController : ControllerBase
     }
 
     [HttpPost("register")]
+    [Authorize(Roles = Seed.AdminRole)]
     [ProducesResponseType(200)]
-    [ProducesResponseType(409)]
-    [ProducesResponseType(500)]
-    public async Task<IActionResult> Register([FromBody] RegisterModel model)
+    [ProducesResponseType(typeof(string), 409)]
+    [ProducesResponseType(typeof(string), 500)]
+    public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
-        var userExists = await _userManager.FindByNameAsync(model.Username);
+        var user = await _userManager.FindByNameAsync(request.Username);
         
-        if (userExists != null) return Conflict();
+        if (user != null) return Conflict("User with this username already exists.");
+        
+        var role = await _roleManager.FindByNameAsync(request.Role);
 
-        IdentityUser user = new()
+        if (role == null)
         {
-            Email = model.Email,
+            var createRoleResult = await _roleManager.CreateAsync(new IdentityRole(request.Role));
+            if (!createRoleResult.Succeeded)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, 
+                    string.Join(Environment.NewLine, 
+                        createRoleResult.Errors.Select(x => x.Description)));
+            }
+            role = await _roleManager.FindByNameAsync(request.Role);
+        }
+
+        user = new()
+        {
             SecurityStamp = Guid.NewGuid().ToString(),
-            UserName = model.Username
+            UserName = request.Username
         };
         
-        var result = await _userManager.CreateAsync(user, model.Password);
+        var result = await _userManager.CreateAsync(user, request.Password);
 
         if (!result.Succeeded)
         {
-            return StatusCode(StatusCodes.Status500InternalServerError);
+            return StatusCode(StatusCodes.Status500InternalServerError, 
+                string.Join(Environment.NewLine, 
+                    result.Errors.Select(x => x.Description)));
         }
 
-        await _userManager.AddToRoleAsync(user, UserRoles.Worker);
+        await _userManager.AddToRoleAsync(user, role!.Name!);;
         return Ok();
     }
 
-    [ProducesResponseType(200)]
-    [ProducesResponseType(400)]
-    [ProducesResponseType(403)]
-    [ProducesResponseType(404)]
-    [ProducesResponseType(500)]
+    [ProducesResponseType(typeof(LoginResponse), 200)]
+    [ProducesResponseType(typeof(string), 400)]
+    [ProducesResponseType(typeof(string), 404)]
+    [ProducesResponseType(typeof(string), 500)]
     [HttpPost("login")]
-    public async Task<IActionResult> Login([FromBody] LoginModel model)
+    public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
-        var user = await _userManager.FindByNameAsync(model.Username);
+        var user = await _userManager.FindByNameAsync(request.Username);
         
-        if (user == null) return NotFound();
+        if (user == null) return NotFound("User with this username not exists");
 
         var result = await _signInManager.PasswordSignInAsync(
             user: user, 
-            password: model.Password, 
+            password: request.Password, 
             isPersistent: false, 
             lockoutOnFailure: false);
 
-        if (result.IsLockedOut) return Forbid();
-
-        if (!result.Succeeded) return BadRequest();
+        if (!result.Succeeded) return BadRequest("Invalid login attempt");
 
         var userRoles = await _userManager.GetRolesAsync(user);
 
@@ -102,9 +115,9 @@ public class UsersController : ControllerBase
         });
     }
 
-    [Authorize(Roles = UserRoles.Admin)]
+    [HttpGet]
+    [Authorize(Roles = Seed.AdminRole)]
     [ProducesResponseType(typeof(IEnumerable<UsersResponse>), 200)]
-    [HttpGet("get-users")]
     public async Task<IActionResult> GetUsers()
     {
         var result = _userManager.Users.AsNoTracking().AsEnumerable();
@@ -115,73 +128,46 @@ public class UsersController : ControllerBase
         }));
     }
     
-    [Authorize(Roles = UserRoles.Admin)]
+    [Authorize(Roles = Seed.AdminRole)]
     [ProducesResponseType(200)]
-    [ProducesResponseType(400)]
-    [ProducesResponseType(404)]
-    [HttpPut("set-user-role")]
+    [ProducesResponseType(typeof(string), 400)]
+    [ProducesResponseType(typeof(string), 404)]
+    [HttpPut("role/set")]
     public async Task<IActionResult> SetUserRole([FromBody] SetRoleRequest request)
     {
-        if (!UserRoles.List.Contains(request.NewRole)) return BadRequest();
+        var role = await _roleManager.FindByNameAsync(request.Role);
+
+        if (role == null) return BadRequest();
         
-        var user = await _userManager.FindByNameAsync(request.UserName);
+        var user = await _userManager.FindByNameAsync(request.Username);
         if (user == null) return NotFound();
 
         var roles = await _userManager.GetRolesAsync(user);
 
-        if (roles.Contains(request.NewRole)) return Ok();
+        if (roles.Contains(request.Role)) return Ok();
 
         await _userManager.RemoveFromRolesAsync(user, roles);
-        await _userManager.AddToRoleAsync(user, request.NewRole);
-
-        return Ok();
-    }
-    
-    [Authorize(Roles = UserRoles.Admin)]
-    [ProducesResponseType(200)]
-    [ProducesResponseType(400)]
-    [HttpPut("block-user")]
-    public async Task<IActionResult> BlockUser([FromBody] BlockingUserRequest request)
-    {
-        var user = await _userManager.FindByNameAsync(request.UserName);
-        if (user == null) return BadRequest();
-
-        user.LockoutEnd = DateTimeOffset.Now + TimeSpan.FromDays(365 * 100);
-        await _userManager.UpdateAsync(user);
-
-        return Ok();
-    }
-    
-    [Authorize(Roles = UserRoles.Admin)]
-    [ProducesResponseType(200)]
-    [ProducesResponseType(400)]
-    [HttpPut("unblock-user")]
-    public async Task<IActionResult> UnblockUser([FromBody] BlockingUserRequest request)
-    {
-        var user = await _userManager.FindByNameAsync(request.UserName);
-        if (user == null) return BadRequest();
-
-        user.LockoutEnd = DateTimeOffset.Now + TimeSpan.FromSeconds(5);
-        await _userManager.UpdateAsync(user);
+        await _userManager.AddToRoleAsync(user, request.Role);
 
         return Ok();
     }
     
     [Authorize]
+    [HttpPut("password/change")]
     [ProducesResponseType(200)]
-    [ProducesResponseType(400)]
-    [HttpPut("change-password")]
+    [ProducesResponseType(typeof(string), 400)]
+    [ProducesResponseType(typeof(string), 403)]
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
     {
         var name = User.Claims.First(x => x.Type == ClaimTypes.Name).Value;
         var user = await _userManager.FindByNameAsync(name);
-        if (user == null) return BadRequest();
+        if (user == null) return Forbid("Username from token not found. Reauthenticate and try again.");
 
         var result = await _userManager.ChangePasswordAsync(user, request.OldPassword, request.NewPassword);
 
         if (!result.Succeeded)
         {
-            return BadRequest();
+            return BadRequest(string.Join(Environment.NewLine, result.Errors.Select(x => x.Description)));;
         }
 
         return Ok();

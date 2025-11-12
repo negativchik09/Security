@@ -7,11 +7,10 @@ using Microsoft.OpenApi.Models;
 using Security.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
-var configuration = builder.Configuration;
 // Add services to the container.
 
 builder.Services.AddDbContext<ApplicationDbContext>(
-    options => options.UseSqlServer(configuration.GetConnectionString("SqlServer")));
+    options => options.UseSqlite("Data Source=projects_demo.db"));
 
 builder.Services.AddIdentity<IdentityUser, IdentityRole>(o =>
 {
@@ -106,6 +105,12 @@ app.UseCors(x => x
     .AllowAnyOrigin()
     .AllowAnyMethod()
     .AllowAnyHeader());
+
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<DbContext>();
+    dbContext.Database.Migrate();
+}
 
 Seed.Initialize(app.Services);
 
